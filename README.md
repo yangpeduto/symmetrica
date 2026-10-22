@@ -10,6 +10,8 @@ data only and checks it against the event feed.
 Data: the open [Metrica Sports sample data](https://github.com/metrica-sports/sample-data)
 (two anonymised matches, synchronised tracking + event data, 25 Hz).
 
+![20 seconds of play: the ring around the ball shows which team the model thinks has it](figures/clip.gif)
+
 ![Possession timeline: event labels vs. tracking-only model](figures/timeline.png)
 
 ## Results
@@ -67,6 +69,7 @@ python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt      # macOS/Linux: .venv/bin/pip
 .venv/Scripts/python scripts/evaluate.py           # downloads the data on first run
 .venv/Scripts/python scripts/figures.py
+.venv/Scripts/python scripts/animate.py
 ```
 
 The raw data is downloaded from Metrica's repository into `data/` and is not
