@@ -1,0 +1,44 @@
+{
+  "label_coverage": {
+    "1": 0.5793691295532599,
+    "2": 0.5893550398141064
+  },
+  "splits": [
+    {
+      "train": 1,
+      "test": 2,
+      "params": {
+        "radius": 0.5,
+        "max_speed": 99.0,
+        "min_frames": 1
+      },
+      "train_accuracy": 0.9335214017045184,
+      "nearest_player": {
+        "accuracy": 0.8092582130278516,
+        "accuracy_tolerant": 0.8249477001297566
+      },
+      "control_with_memory": {
+        "accuracy": 0.9338149559447536,
+        "accuracy_tolerant": 0.9468924608744008
+      }
+    },
+    {
+      "train": 2,
+      "test": 1,
+      "params": {
+        "radius": 0.5,
+        "max_speed": 99.0,
+        "min_frames": 1
+      },
+      "train_accuracy": 0.9338149559447536,
+      "nearest_player": {
+        "accuracy": 0.802623434747417,
+        "accuracy_tolerant": 0.8187528098801999
+      },
+      "control_with_memory": {
+        "accuracy": 0.9335214017045184,
+        "accuracy_tolerant": 0.9458519556766192
+      }
+    }
+  ]
+}
