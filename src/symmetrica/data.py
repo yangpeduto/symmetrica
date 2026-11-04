@@ -54,23 +54,56 @@ def _read_tracking_file(path: Path, team: str) -> pd.DataFrame:
 def tracking(game: int) -> pd.DataFrame:
     """One row per frame: period, time, home_*/away_* player positions and ball."""
     folder = _game_dir(game)
-    home = _read_tracking_file(folder / f"Sample_Game_{game}_RawTrackingData_Home_Team.csv", "home")
-    away = _read_tracking_file(folder / f"Sample_Game_{game}_RawTrackingData_Away_Team.csv", "away")
+    return read_tracking(folder / f"Sample_Game_{game}_RawTrackingData_Home_Team.csv",
+                         folder / f"Sample_Game_{game}_RawTrackingData_Away_Team.csv")
+
+
+def read_tracking(home_path: Path, away_path: Path) -> pd.DataFrame:
+    """Join the home and away tracking CSVs of one match (both carry the ball)."""
+    home = _read_tracking_file(home_path, "home")
+    away = _read_tracking_file(away_path, "away")
     away = away.drop(columns=["period", "time", "ball_x", "ball_y"])
     return home.join(away)
 
 
-def events(game: int) -> pd.DataFrame:
-    df = pd.read_csv(_game_dir(game) / f"Sample_Game_{game}_RawEventsData.csv")
-    df.columns = ["team", "type", "subtype", "period", "start_frame", "start_time",
-                  "end_frame", "end_time", "from", "to", "start_x", "start_y", "end_x", "end_y"]
+EVENT_COLUMNS = ["team", "type", "subtype", "period", "start_frame", "start_time",
+                 "end_frame", "end_time", "from", "to", "start_x", "start_y", "end_x", "end_y"]
+
+
+def _player_id(team: pd.Series, name: pd.Series) -> pd.Series:
+    """'Player19' of the away team -> 'away_19', the stem used by the tracking columns."""
+    number = name.astype(str).str.replace("Player", "", regex=False)
+    return (team + "_" + number).astype(object).where(name.notna(), None)
+
+
+def prepare_events(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise a raw Metrica event table: lower-case teams, metre coordinates, player ids.
+
+    Event coordinates use the same [0, 1] convention as tracking, so they are
+    converted with the same transform and live in the same metre frame.
+    """
+    df = df.copy()
+    df.columns = EVENT_COLUMNS
     df["team"] = df["team"].str.lower()
     df["subtype"] = df["subtype"].fillna("")
+    df["start_x"], df["start_y"] = _to_metres(df["start_x"], df["start_y"])
+    df["end_x"], df["end_y"] = _to_metres(df["end_x"], df["end_y"])
+    df["player"] = _player_id(df["team"], df["from"])
+    df["receiver"] = _player_id(df["team"], df["to"])
     return df
+
+
+def events(game: int) -> pd.DataFrame:
+    """One row per event, coordinates in metres (same frame as tracking)."""
+    return prepare_events(pd.read_csv(_game_dir(game) / f"Sample_Game_{game}_RawEventsData.csv"))
+
+
+def player_ids(track: pd.DataFrame, team: str) -> list[str]:
+    """Column stems of one team's players, e.g. ['home_11', 'home_1', ...]."""
+    return [c[:-2] for c in track.columns if c.startswith(f"{team}_") and c.endswith("_x")]
 
 
 def player_arrays(track: pd.DataFrame, team: str) -> tuple[np.ndarray, np.ndarray]:
     """(frames x players) arrays of x and y for one team, NaN where a player is off the pitch."""
-    xs = [c for c in track.columns if c.startswith(f"{team}_") and c.endswith("_x")]
-    ys = [c[:-2] + "_y" for c in xs]
-    return track[xs].to_numpy(), track[ys].to_numpy()
+    ids = player_ids(track, team)
+    return track[[f"{p}_x" for p in ids]].to_numpy(), track[[f"{p}_y" for p in ids]].to_numpy()

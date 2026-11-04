@@ -1,0 +1,47 @@
+{
+  "machine": {
+    "python": "3.13.18",
+    "numpy": "2.5.3",
+    "cpus": 4,
+    "platform": "Linux-6.18.44-fc-v233-x86_64-with-glibc2.39"
+  },
+  "match": {
+    "game": 2,
+    "frames": 141156,
+    "minutes": 94.1
+  },
+  "load_tracking_s": 0.62,
+  "velocities_s": 0.33,
+  "pitch_control_per_frame": {
+    "50x32": {
+      "median_ms": 29.3,
+      "p95_ms": 36.55,
+      "min_probability_mass": 0.9911
+    },
+    "32x21": {
+      "median_ms": 12.35,
+      "p95_ms": 16.35,
+      "min_probability_mass": 0.9911
+    }
+  },
+  "voronoi_all_frames": {
+    "seconds": 17.19,
+    "frames_per_second": 8212,
+    "grid": "21x14"
+  },
+  "full_report_analysis_s": 16.9,
+  "report_stages_s": {
+    "possession_and_kinematics": 0.666,
+    "voronoi": 3.169,
+    "pitch_control_series": 5.172,
+    "threat": 1.258,
+    "pressing": 0.657,
+    "momentum_and_networks": 0.056,
+    "insights": 0.03,
+    "clips": 5.877
+  },
+  "possession_accuracy_out_of_sample": {
+    "train 1 -> test 2": 0.9338,
+    "train 2 -> test 1": 0.9335
+  }
+}

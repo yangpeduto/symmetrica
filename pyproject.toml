@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "symmetrica"
+version = "0.2.0"
+description = "Tactical analytics on synchronised football tracking and event data: possession, pitch control, pressing, xT, line-breaking passes and an interactive HTML match report."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Yang Peduto" }]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26", "pandas>=2.2", "matplotlib>=3.8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+symmetrica = ["report_template.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+addopts = "-q"
