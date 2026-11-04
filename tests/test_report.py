@@ -25,14 +25,45 @@ def test_summary_is_complete_and_strict_json(synthetic_match, synthetic_summary)
     assert len(s["threat"]["xt_grid"]) == 8 and len(s["threat"]["xt_grid"][0]) == 12
 
 
-def test_clips_carry_decodable_pitch_control(synthetic_summary):
+def test_clips_carry_decodable_surfaces_vectors_and_pass_options(synthetic_summary):
     clip = synthetic_summary["clips"][0]
     nx, ny = clip["grid"]
-    f = next(fr for fr in clip["frames"] if fr["pc"])
-    surface = base64.b64decode(f["pc"])
-    assert len(surface) == nx * ny
+    f = next(fr for fr in clip["frames"] if fr["pc"] and fr.get("epv"))
+    assert len(base64.b64decode(f["pc"])) == nx * ny
+    assert len(base64.b64decode(f["epv"])) == nx * ny
+    assert clip["epv_scale"] > 0 and len(f["best_space"]) == 3
     assert len(f["home"]) == 11 and len(f["away"]) == 11
-    assert f["pos"] in (-1, 0, 1)
+    assert all(len(p) == 6 for p in f["home"])               # number, x, y, vx, vy, in-run flag
+    assert f["pos"] in (-1, 0, 1) and f["hd"] in (-1, 1)
+    assert clip["keepers"] == {"home": [1], "away": [12]}
+    passes = [p for c in synthetic_summary["clips"] for p in c["passes"]]
+    assert passes, "clips should contain evaluated passes"
+    p = passes[0]
+    assert len(p["options"]) == 10 and p["best"] == p["options"][0]["n"]
+    assert all(0 <= o["c"] <= 1 for o in p["options"])
+    assert sorted(o["g"] for o in p["options"])[::-1] == [o["g"] for o in p["options"]]
+
+
+def test_summary_has_the_new_sections(synthetic_summary):
+    s = synthetic_summary
+    assert s["meta"]["pitch_control_model"]["motion"] == "physics"
+    assert set(s["offball"]["categories"]) == set(s["offball"]["home"]["by_category"])
+    assert s["shape"]["formations"]["home"]["out"]["formation"] == "4-4-2"
+    assert {"best_option_share", "epv_left_per_pass"} <= set(s["decisions"]["home"])
+    assert len(s["players"]) == 22 and all("pct" in p for p in s["players"])
+    assert [k for k, _ in s["player_metrics"]][:2] == ["distance_p90", "hsr_p90"]
+
+
+def test_landing_page_links_every_match(tmp_path, synthetic_summary):
+    img = tmp_path / "report_overview.png"
+    img.write_bytes(b"\x89PNG")
+    path = report.write_landing({"game1": synthetic_summary, "game2": synthetic_summary},
+                                tmp_path / "docs" / "index.html", [img])
+    page = path.read_text()
+    assert 'href="game1.html"' in page and 'href="game2.html"' in page
+    assert "__MATCHES__" not in page and "__REPO__" not in page
+    assert (tmp_path / "docs" / "assets" / "report_overview.png").exists()
+    assert not re.search(r'<script[^>]+src=', page)
 
 
 def test_html_is_self_contained_and_escapes_its_payload(synthetic_summary):
@@ -84,7 +115,24 @@ const { chromium } = require('playwright');
   }));
   await p.click('#theme');
   await p.click('[data-overlay="voronoi"]');
-  await p.waitForTimeout(200);
+  await p.click('[data-overlay="epv"]');
+  for (const layer of ['heat', 'vec', 'shape', 'pass']) {
+    await p.click(`[data-layer="${layer}"]`);   // toggle every layer off and on again
+    await p.click(`[data-layer="${layer}"]`);
+  }
+  await p.click('[data-phase="in"]');
+  await p.click('[data-oteam="away"]');
+  const target = await p.$eval('#leaders tr[data-player]', r => r.dataset.player);
+  await p.click('#leaders tr[data-player]');
+  await p.selectOption('#pb', { index: 2 });
+  await p.waitForTimeout(300);
+  out.explorer = {
+    selected: await p.$eval('#pa', s => s.value), target,
+    bars: await p.$$eval('#pbars .pbar', x => x.length),
+    marks: await p.$$eval('#pbars .mark', x => x.length),
+    polygons: await p.$$eval('#pradar polygon', x => x.length),
+    layers: await p.$$eval('[data-layer]', x => x.map(c => c.checked)),
+  };
   console.log(JSON.stringify({ ...out, errors }));
   await b.close();
 })();
@@ -95,4 +143,10 @@ const { chromium } = require('playwright');
     assert out["errors"] == []
     assert not out["overflow"]
     assert out["insights"] == len(synthetic_summary["insights"])
-    assert out["kpis"] == 13 and out["svgs"] >= 6 and out["canvas"] > 0
+    assert out["kpis"] == 20 and out["svgs"] >= 10 and out["canvas"] > 0
+    ex = out["explorer"]
+    assert ex["selected"] == ex["target"]                   # leaderboard click opens the explorer
+    n_metrics = len(synthetic_summary["player_metrics"])
+    assert ex["bars"] == ex["marks"] == n_metrics            # comparison player drawn on every bar
+    assert ex["polygons"] == 4 + 2                           # 4 grid rings + two players
+    assert ex["layers"] == [True, True, False, True]         # toggled twice: back to the defaults

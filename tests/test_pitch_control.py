@@ -16,8 +16,9 @@ def one_v_one(home=(-10.0, 0.0), away=(10.0, 0.0), ball=(0.0, 0.0), home_vel=(0,
                       ["away_101"], np.array([away], float), np.array([away_vel], float), np.array(ball, float))
 
 
-def test_time_to_intercept_formula():
-    tau = pc.time_to_intercept(np.array([[0.0, 0.0]]), np.array([[2.0, 0.0]]), np.array([[10.0, 0.0]]), P)
+def test_time_to_intercept_linear_formula():
+    linear = pc.PitchControlParams(motion="linear")
+    tau = pc.time_to_intercept(np.array([[0.0, 0.0]]), np.array([[2.0, 0.0]]), np.array([[10.0, 0.0]]), linear)
     # Drifts 1.4 m during the 0.7 s reaction, then covers the remaining 8.6 m at 5 m/s.
     assert tau[0, 0] == pytest.approx(0.7 + 8.6 / 5.0)
 

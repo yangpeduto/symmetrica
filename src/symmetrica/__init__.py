@@ -6,4 +6,4 @@ counter-press, turnovers), threat (xT, progressive and line-breaking passes,
 packing), momentum, networks, insights, analysis (all of it on one match)
 and report (interactive HTML).
 """
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -5,6 +5,7 @@ data/
 .env
 HANDOFF.md
 reports/*
+!reports/game1.html
 !reports/game2.html
 *.egg-info/
 .pytest_cache/

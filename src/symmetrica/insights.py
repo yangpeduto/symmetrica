@@ -161,6 +161,62 @@ def generate(summary: dict) -> list[Insight]:
                 f"the three busiest links carried {net['top3_link_share']:.0%} of the team's passes.",
                 min(net["top3_link_share"] * 2, 1.0)))
 
+    # Defensive block: compactness out of possession, and how the shape changes with the ball.
+    sh = summary.get("shape")
+    if sh:
+        area = {t: _f((sh[t]["out"] or {}).get("area")) for t in ("home", "away")}
+        if all(math.isfinite(v) for v in area.values()):
+            t = "home" if area["home"] <= area["away"] else "away"
+            o = "away" if t == "home" else "home"
+            even = _ratio_strength(area["home"], area["away"]) < EVEN
+            out.append(Insight(
+                "shape", None if even else t,
+                "Both defensive blocks were similarly compact" if even else f"{NAMES[t]} defended more compactly",
+                f"Out of possession the outfield hull covered {area[t]:.0f} m² for {NAMES[t]} vs "
+                f"{area[o]:.0f} m², {sh[t]['out']['width']:.0f} m wide and {sh[t]['out']['depth']:.0f} m deep, "
+                f"its centroid {sh[t]['out']['height']:.0f} m from its own goal.",
+                _ratio_strength(area["home"], area["away"])))
+        forms = sh.get("formations", {})
+        for team in ("home", "away"):
+            f_in, f_out = (forms.get(team) or {}).get("in"), (forms.get(team) or {}).get("out")
+            if f_in and f_out:
+                same = f_in["formation"] == f_out["formation"]
+                out.append(Insight(
+                    "formation", team,
+                    f"{NAMES[team]} played a {f_in['formation']}" if same else
+                    f"{NAMES[team]}: {f_out['formation']} without the ball, {f_in['formation']} with it",
+                    "Template match of the average outfield shape (Hungarian assignment); "
+                    f"in-possession hull {sh[team]['in']['area']:.0f} m² vs {sh[team]['out']['area']:.0f} m² out.",
+                    0.3 if same else 0.6))
+
+    # Off-ball running and the space it created.
+    ob = summary.get("offball")
+    if ob:
+        cat = "Behind defensive line"
+        b_h, b_a = ob["home"]["by_category"][cat], ob["away"]["by_category"][cat]
+        s_h, s_a = _f(ob["home"]["space_m2"]), _f(ob["away"]["space_m2"])
+        t = "home" if s_h >= s_a else "away"
+        o = "away" if t == "home" else "home"
+        out.append(Insight(
+            "off-ball runs", t, f"{NAMES[t]}'s runs created more space",
+            f"{ob[t]['runs']} high-intensity off-ball runs opened {ob[t]['space_m2']:,.0f} m² of pitch control "
+            f"for teammates (vs {ob[o]['space_m2']:,.0f} m²); runs in behind: Home {b_h}, Away {b_a}; "
+            f"overlaps/underlaps: {ob[t]['overlaps']}/{ob[t]['underlaps']}.",
+            _ratio_strength(s_h, s_a)))
+
+    # Pass decisions.
+    dec = summary.get("decisions")
+    if dec and dec["home"]["passes_evaluated"] and dec["away"]["passes_evaluated"]:
+        b_h, b_a = _f(dec["home"]["best_option_share"]), _f(dec["away"]["best_option_share"])
+        t = "home" if b_h >= b_a else "away"
+        out.append(Insight(
+            "decisions", t, f"{NAMES[t]} picked the best pass option more often"
+            if _ratio_strength(b_h, b_a) >= EVEN else "Passing decisions were evenly matched",
+            f"Chosen receiver = highest-EPV option on {max(b_h, b_a):.0%} of passes vs {min(b_h, b_a):.0%}; "
+            f"top-3 option {dec[t]['top3_share']:.0%} of the time, leaving "
+            f"{dec[t]['epv_left_per_pass'] * 1000:.1f} mEPV per pass on the table.",
+            _ratio_strength(b_h, b_a)))
+
     # Momentum: the strongest ten-minute spell, relative to the team's whole-match threat.
     for team in ("home", "away"):
         start, value = summary["momentum"]["best_spell"][team]

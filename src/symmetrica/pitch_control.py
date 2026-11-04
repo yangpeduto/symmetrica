@@ -8,12 +8,32 @@ Two models, from cheap to physical:
 
 * **Probabilistic pitch control** (Spearman, 2018, "Beyond Expected Goals").
   For a target location r the ball needs t_ball(r) = |r - ball| / v_ball to
-  arrive. Player j needs
+  arrive. Player j needs an arrival time tau_j(r) from one of two motion models:
 
-      tau_j(r) = t_react + |r - (p_j + v_j * t_react)| / v_max
+  - ``motion="linear"`` (Spearman's original): he keeps his velocity for a
+    reaction time, then runs straight at r at constant speed,
 
-  i.e. he keeps running on his current velocity for a reaction time, then
-  sprints straight to r. Because nobody hits that time exactly, the chance he
+        tau_j(r) = t_react + |r - (p_j + v_j * t_react)| / v_max.
+
+    Direction changes are free, so a player sprinting away from r turns
+    around instantly.
+
+  - ``motion="physics"`` (default, momentum-aware). After a short reaction
+    time the player accelerates with at most a_max, against a drag that caps
+    his speed at v_max (Fujimura & Sugihara, 2005):
+    dv/dt = a_max * u - (a_max / v_max) * v, |u| <= 1. With alpha = a_max / v_max
+    the set of points he can reach after time t is a disk with
+
+        centre  c(t) = p_r + v_j * (1 - exp(-alpha t)) / alpha
+        radius  R(t) = v_max * (t - (1 - exp(-alpha t)) / alpha)
+
+    so his momentum keeps carrying him on while he brakes (a sprinter at
+    7 m/s drifts ~7 m before he can come back) and his acceleration from
+    rest is exactly a_max. tau_j(r) is the first t with |r - c(t)| <= R(t),
+    found by a coarse scan (a fast runner's disks are not nested: he can
+    pass through r and be unable to stop there) followed by bisection.
+
+  Because nobody hits that time exactly, the chance he
   has arrived by time t is a logistic in (t - tau_j) with spread sigma, and
   once there he controls the ball at rate lambda. The control probability of
   each player then follows
@@ -38,17 +58,32 @@ from .pitch import HALF_L, PITCH_LENGTH, Grid, direction_per_frame
 
 @dataclass(frozen=True)
 class PitchControlParams:
-    """Defaults follow Spearman (2018) as popularised by Shaw's open implementation."""
+    """Integration defaults follow Spearman (2018) / Shaw's open implementation.
 
-    max_player_speed: float = 5.0   # m/s, sustained sprint towards the ball
-    reaction_time: float = 0.7      # s before a player can change direction
-    tti_sigma: float = 0.45         # s, uncertainty of the arrival time
+    `motion` picks the arrival-time model. The physics model's v_max and
+    reaction time are physical quantities (top speed, perception delay); the
+    linear model's 5 m/s and 0.7 s are Spearman's *effective* values that
+    fold acceleration and turning into one average speed. The physics
+    reaction time and `tti_sigma` were picked by cross-match validation of
+    pass completion (`scripts/benchmark.py`): tuned on either match, the same
+    values win on the other. Use ``PitchControlParams(motion="linear",
+    tti_sigma=0.45)`` for Spearman's original model.
+    """
+
+    motion: str = "physics"         # "physics" (momentum-aware) or "linear" (Spearman)
+    max_acceleration: float = 7.0   # m/s^2, a_max of the physics model
+    top_speed: float = 7.8          # m/s, v_max of the physics model
+    physics_reaction_time: float = 0.1   # s of perception delay before accelerating (cross-validated)
+    max_player_speed: float = 5.0   # m/s, linear model: average speed towards the ball
+    reaction_time: float = 0.7      # s, linear model: reaction time
+    tti_sigma: float = 0.6          # s, arrival-time uncertainty (cross-validated; Spearman used 0.45)
     lambda_att: float = 4.3         # 1/s, ball-control rate once arrived
     kappa_def: float = 1.0          # defender advantage (lambda_def = kappa * lambda_att)
     ball_speed: float = 15.0        # m/s, average ball speed of a pass
     dt: float = 0.04                # s, integration step (one tracking frame)
     max_time: float = 10.0          # s, integration horizon after the ball arrives
     tolerance: float = 0.01         # stop once 1 - sum(P) < tolerance everywhere
+    interception_reach: float = 1.0  # m; a ball passing this close can be cut out (pass lanes)
 
 
 @dataclass
@@ -64,13 +99,74 @@ class PitchControlSurface:
 
 
 def time_to_intercept(pos: np.ndarray, vel: np.ndarray, targets: np.ndarray,
-                      params: PitchControlParams) -> np.ndarray:
-    """(n_targets, n_players) arrival times tau_j(r) in seconds."""
+                      params: PitchControlParams, reach: float = 0.0) -> np.ndarray:
+    """(n_targets, n_players) times for each player to get within `reach` m of each target."""
     if len(pos) == 0:
         return np.empty((len(targets), 0))
-    reaction = pos + vel * params.reaction_time
-    d = np.linalg.norm(targets[:, None, :] - reaction[None, :, :], axis=2)
-    return params.reaction_time + d / params.max_player_speed
+    if params.motion == "linear":
+        reaction = pos + vel * params.reaction_time
+        d = np.linalg.norm(targets[:, None, :] - reaction[None, :, :], axis=2)
+        return params.reaction_time + np.maximum(d - reach, 0.0) / params.max_player_speed
+    if params.motion != "physics":
+        raise ValueError(f"unknown motion model {params.motion!r}")
+    return physics_arrival_time(pos, vel, targets, params.max_acceleration, params.top_speed,
+                                params.physics_reaction_time, reach=reach)
+
+
+def _drift(t: np.ndarray, alpha: float) -> np.ndarray:
+    """(1 - exp(-alpha t)) / alpha: how far (per unit of initial velocity) momentum carries a player."""
+    return -np.expm1(-alpha * t) / alpha
+
+
+def physics_arrival_time(pos: np.ndarray, vel: np.ndarray, targets: np.ndarray,
+                         a_max: float = 7.0, v_max: float = 7.8, reaction: float = 0.1,
+                         scan_step: float = 0.2, bisections: int = 8, reach: float = 0.0) -> np.ndarray:
+    """Earliest time each player can be at (or within `reach` m of) each target under bounded acceleration.
+
+    Returns (n_targets, n_players) seconds. See the module docstring for the
+    reachable-disk model; `reaction` seconds are spent coasting on the
+    current velocity first.
+    """
+    pos, vel = np.asarray(pos, float), np.asarray(vel, float)
+    alpha = a_max / v_max
+    start = pos + vel * reaction
+    D = np.asarray(targets, float)[:, None, :] - start[None, :, :]          # (C, P, 2)
+    shape = D.shape[:2]
+    dx, dy = D[..., 0].ravel(), D[..., 1].ravel()
+    vx = np.broadcast_to(vel[None, :, 0], shape).ravel()
+    vy = np.broadcast_to(vel[None, :, 1], shape).ravel()
+    dist = np.hypot(dx, dy)
+    speed = np.hypot(vx, vy)
+
+    def h(t: np.ndarray, i: np.ndarray) -> np.ndarray:
+        """|D - v drift(t)| - R(t) for the flat elements i."""
+        dr = _drift(t, alpha)
+        return np.hypot(dx[i] - vx[i] * dr, dy[i] - vy[i] * dr) - v_max * (t - dr) - reach
+
+    # Bounds: h(t) >= dist - |v|/alpha - v_max t > 0 before t_lo, and h < 0 after t_hi.
+    t_lo = np.maximum((dist - reach - speed / alpha) / v_max, 0.0)
+    t_hi = (dist + speed / alpha) / v_max + 1.0 / alpha + scan_step
+    lo, hi = t_lo.copy(), t_hi.copy()
+    hi[dist <= reach] = 0.0
+    # Coarse scan, each element from its own lower bound, only over unresolved elements:
+    # the *first* sign change is the arrival (a fast runner can pass through r and
+    # be unable to stop there, so later roots exist).
+    pending = np.flatnonzero(dist > reach)
+    k = 1
+    while pending.size:
+        t = t_lo[pending] + k * scan_step
+        hit = h(t, pending) <= 0
+        idx = pending[hit]
+        hi[idx], lo[idx] = t[hit], t[hit] - scan_step
+        pending = pending[~hit & (t < t_hi[pending])]
+        k += 1
+    for _ in range(bisections):
+        mid = 0.5 * (lo + hi)
+        neg = h(mid, slice(None)) <= 0
+        hi = np.where(neg, mid, hi)
+        lo = np.where(neg, lo, mid)
+    hi = hi.reshape(shape)
+    return reaction + hi
 
 
 def pitch_control_at(targets: np.ndarray, ball: np.ndarray,

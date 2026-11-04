@@ -10,35 +10,79 @@
     "frames": 141156,
     "minutes": 94.1
   },
-  "load_tracking_s": 0.62,
-  "velocities_s": 0.33,
+  "load_tracking_s": 0.64,
+  "velocities_s": 0.42,
   "pitch_control_per_frame": {
-    "50x32": {
-      "median_ms": 29.3,
-      "p95_ms": 36.55,
+    "physics 50x32": {
+      "median_ms": 48.43,
+      "p95_ms": 62.97,
+      "min_probability_mass": 0.9924
+    },
+    "physics 32x21": {
+      "median_ms": 20.19,
+      "p95_ms": 26.29,
+      "min_probability_mass": 0.9927
+    },
+    "linear 50x32": {
+      "median_ms": 28.99,
+      "p95_ms": 37.34,
       "min_probability_mass": 0.9911
     },
-    "32x21": {
-      "median_ms": 12.35,
-      "p95_ms": 16.35,
+    "linear 32x21": {
+      "median_ms": 14.77,
+      "p95_ms": 15.71,
       "min_probability_mass": 0.9911
     }
   },
+  "physics_arrival_times_50x32_x_22_players_ms": 27.6,
+  "pass_options": {
+    "passes": 964,
+    "seconds": 2.73,
+    "ms_per_pass": 2.83
+  },
+  "pass_completion_validation": {
+    "physics": {
+      "passes": 964,
+      "intercepted": 135,
+      "mean_completion_completed": 0.587,
+      "mean_completion_intercepted": 0.227,
+      "auc": 0.835
+    },
+    "linear_spearman": {
+      "passes": 964,
+      "intercepted": 135,
+      "mean_completion_completed": 0.75,
+      "mean_completion_intercepted": 0.369,
+      "auc": 0.827
+    }
+  },
+  "offball_runs": {
+    "runs": 256,
+    "seconds_incl_counterfactual_space": 6.76
+  },
+  "shape_series": {
+    "samples": 28232,
+    "seconds": 4.13
+  },
   "voronoi_all_frames": {
-    "seconds": 17.19,
-    "frames_per_second": 8212,
+    "seconds": 15.33,
+    "frames_per_second": 9207,
     "grid": "21x14"
   },
-  "full_report_analysis_s": 16.9,
+  "full_report_analysis_s": 35.3,
   "report_stages_s": {
-    "possession_and_kinematics": 0.666,
-    "voronoi": 3.169,
-    "pitch_control_series": 5.172,
-    "threat": 1.258,
-    "pressing": 0.657,
-    "momentum_and_networks": 0.056,
-    "insights": 0.03,
-    "clips": 5.877
+    "possession_and_kinematics": 0.664,
+    "voronoi": 3.149,
+    "pitch_control_series": 8.14,
+    "threat": 1.272,
+    "pass_options": 2.743,
+    "pressing": 0.426,
+    "offball_runs": 5.972,
+    "shape": 4.063,
+    "players": 0.393,
+    "momentum_and_networks": 0.041,
+    "insights": 0.254,
+    "clips": 8.153
   },
   "possession_accuracy_out_of_sample": {
     "train 1 -> test 2": 0.9338,

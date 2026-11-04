@@ -84,6 +84,7 @@ button, select {
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; min-height: 34px;
 }
 button:hover, select:hover { border-color: var(--text-secondary); }
+select { max-width: 100%; text-overflow: ellipsis; }
 button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .controls .spacer { flex: 1; }
@@ -136,6 +137,16 @@ summary { cursor: pointer; color: var(--text-secondary); }
 .method p { margin: 0 0 10px; break-inside: avoid; }
 .method b { color: var(--text-primary); }
 footer { color: var(--text-muted); font-size: 13px; margin-top: 24px; }
+.layers label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-secondary); cursor: pointer; margin-right: 10px; }
+.layers input { accent-color: var(--text-primary); width: 16px; height: 16px; }
+tr[data-player] { cursor: pointer; }
+tr[data-player]:hover td { background: var(--surface-0); }
+.pbar { display: grid; grid-template-columns: minmax(84px, 150px) minmax(50px, 1fr) minmax(84px, 112px); gap: 10px; align-items: center; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--grid); }
+.pbar .track { position: relative; height: 10px; background: var(--grid); border-radius: 5px; }
+.pbar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--text-primary); }
+.pbar .mark { position: absolute; top: -3px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; background: var(--magnitude); }
+.pbar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.pbar .v b { color: var(--text-primary); font-weight: 600; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -171,9 +182,9 @@ footer { color: var(--text-muted); font-size: 13px; margin-top: 24px; }
     <ul class="insights" id="insights"></ul>
   </section>
 
-  <section class="card" style="margin-bottom:16px">
+  <section class="card" style="margin-bottom:16px" id="replay">
     <h2>Key moments, replayed from tracking data</h2>
-    <p class="sub">25 Hz tracking, resampled for playback. The overlay shows who would win the ball at each spot of the pitch if it were played there now.</p>
+    <p class="sub">25 Hz tracking, resampled for playback. Pitch control uses a momentum-aware motion model (max. acceleration <span id="amax"></span> m/s², top speed <span id="vmax"></span> m/s): a player sprinting one way cannot turn round instantly.</p>
     <div class="controls">
       <select id="clip" aria-label="Choose a moment"></select>
       <button id="play" type="button">Pause</button>
@@ -181,17 +192,26 @@ footer { color: var(--text-muted); font-size: 13px; margin-top: 24px; }
         <button type="button" data-speed="0.5">0.5×</button><button type="button" data-speed="1" aria-pressed="true">1×</button><button type="button" data-speed="2">2×</button>
       </div>
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Overlay">
-        <button type="button" data-overlay="pc" aria-pressed="true">Pitch control</button><button type="button" data-overlay="voronoi">Voronoi</button><button type="button" data-overlay="none">None</button>
+      <div class="seg" role="group" aria-label="Heatmap">
+        <button type="button" data-overlay="pc" aria-pressed="true">Pitch control</button><button type="button" data-overlay="epv">EPV</button><button type="button" data-overlay="voronoi">Voronoi</button>
       </div>
+    </div>
+    <div class="controls layers" role="group" aria-label="Layers">
+      <label><input type="checkbox" data-layer="heat" checked> Pitch control / EPV heatmap</label>
+      <label><input type="checkbox" data-layer="vec" checked> Velocity vectors &amp; off-ball run trails</label>
+      <label><input type="checkbox" data-layer="shape"> Defensive lines &amp; team convex hull</label>
+      <label><input type="checkbox" data-layer="pass" checked> Best pass option / passing lanes</label>
     </div>
     <div class="canvas-wrap"><canvas id="pitch" aria-label="Animated pitch view"></canvas></div>
     <div class="controls" style="margin:8px 0 0"><input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Scrub through the moment"></div>
     <div class="caption" id="clipcap"></div>
+    <div class="caption" id="passcap"></div>
     <div class="legend">
       <span><i class="swatch sw-home"></i>Home</span><span><i class="swatch sw-away"></i>Away</span>
       <span><i class="swatch" style="background:var(--ball)"></i>Ball</span>
-      <span>Away control</span><span class="ramp" id="divramp2"></span><span>Home control</span>
+      <span id="leg-div"><span>Away control</span><span class="ramp" id="divramp2"></span><span>Home control</span></span>
+      <span id="leg-epv" hidden><span>Low EPV</span><span class="ramp" id="seqramp2"></span><span>High EPV · ◎ most valuable space owned</span></span>
+      <span>▲ lanes: brighter = likelier to arrive · ◉ best option · ◌ chosen</span>
     </div>
   </section>
 
@@ -239,12 +259,75 @@ footer { color: var(--text-muted); font-size: 13px; margin-top: 24px; }
     </div>
   </section>
 
+  <section class="grid g2">
+    <div class="card">
+      <h2>High-intensity off-ball runs</h2>
+      <p class="sub">Runs above 5 m/s for at least 1.5 s while a teammate has the ball, attacking →. Width shows the pitch control the run opened for teammates.</p>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Team"><button type="button" data-oteam="home" aria-pressed="true">Home</button><button type="button" data-oteam="away">Away</button></div>
+        <select id="runcat" aria-label="Run category"></select>
+      </div>
+      <div id="runs" class="chart"></div>
+      <table id="runtable" style="margin-top:10px"></table>
+    </div>
+    <div class="card">
+      <h2>Pass decisions</h2>
+      <p class="sub">Every completed pass, scored against every teammate the passer could have found: completion probability × xT, relative to keeping the ball's current value (mEPV = 1/1000 of a goal).</p>
+      <table id="dectable"></table>
+      <h2 style="margin-top:18px;font-size:16px">Biggest missed opportunities</h2>
+      <p class="sub" style="margin-bottom:6px">Largest gaps between the best option and the pass played. A completed pass the model rated near 0 % marks a blind spot of the model (no ball height, no body shape), not necessarily a poor decision.</p>
+      <table id="missed"></table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:16px">
+    <h2>Team shape and formations</h2>
+    <p class="sub">Average outfield positions relative to the team centroid, matched to formation templates. Each team attacks →.</p>
+    <div class="controls"><div class="seg" role="group" aria-label="Phase"><button type="button" data-phase="out" aria-pressed="true">Out of possession</button><button type="button" data-phase="in">In possession</button></div></div>
+    <div class="grid g2" style="margin-bottom:0">
+      <div><h2 id="form-home-h" style="font-size:16px"></h2><div id="form-home" class="chart"></div><p class="sub" id="form-home-roles" style="margin:6px 0 0;font-size:13px"></p></div>
+      <div><h2 id="form-away-h" style="font-size:16px"></h2><div id="form-away" class="chart"></div><p class="sub" id="form-away-roles" style="margin:6px 0 0;font-size:13px"></p></div>
+    </div>
+    <div class="grid g-wide" style="margin:16px 0 0">
+      <div><h2 style="font-size:16px">Compactness out of possession</h2><p class="sub">Convex-hull area of the ten outfield players per minute; lower = more compact block.</p><div id="compact" class="chart"></div>
+      <div class="legend"><span><i class="swatch sw-home"></i>Home</span><span><i class="swatch sw-away"></i>Away</span></div></div>
+      <div><table id="shapetable"></table></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:16px" id="explorer">
+    <h2>Player explorer</h2>
+    <p class="sub">Click a player in a passing network or the leaderboard, or pick one here. Percentiles rank per-90 output against <span id="poolsize"></span> outfield players with 30+ minutes.</p>
+    <div class="controls">
+      <select id="pa" aria-label="Player"></select>
+      <span style="color:var(--text-secondary)">compare with</span>
+      <select id="pb" aria-label="Comparison player"></select>
+    </div>
+    <div class="grid g2" style="margin-bottom:0">
+      <div>
+        <div id="pheader" class="caption" style="margin:0 0 8px"></div>
+        <div id="pterritory" class="chart"></div>
+        <div class="legend"><span>Territory (share of time)</span><span>→ progressive / line-breaking passes</span></div>
+        <table id="pphys" style="margin-top:10px"></table>
+      </div>
+      <div>
+        <div id="pradar" class="chart"></div>
+        <div id="pbars"></div>
+      </div>
+    </div>
+  </section>
+
   <section class="card">
     <h2>How the numbers are made</h2>
     <div class="method">
       <p><b>Possession.</b> Frame labels from the event feed (team of the last on-ball event, nobody after the ball goes out or a foul). The tracking-only model in this repo agrees on <span id="acc"></span> of in-play frames.</p>
       <p><b>Voronoi dominance.</b> Every spot belongs to the team of the nearest player. Computed on every 5th frame of the match.</p>
-      <p><b>Pitch control.</b> Spearman (2018): each player's arrival time from his position and velocity (0.7 s reaction, 5 m/s), a logistic arrival uncertainty (σ = 0.45 s) and a control rate of 4.3/s, integrated until the probabilities sum to 1.</p>
+      <p><b>Pitch control.</b> Spearman (2018) with momentum-aware arrival times: after a 0.1 s perception delay each player accelerates at up to 7 m/s² against drag capping him at 7.8 m/s, so momentum carries him on while he brakes. Logistic arrival uncertainty (σ = 0.6 s), control rate 4.3/s, integrated until the probabilities sum to 1.</p>
+      <p><b>EPV.</b> Attacking pitch control × xT at each spot: the dangerous space the team in possession owns.</p>
+      <p><b>Pass options.</b> For every teammate: control at the receiver × (1 − chance a defender gets within 1 m of the lane before the ball). Value = completion × xT, gain relative to the ball's current xT. Validated on intercepted vs completed passes (ROC AUC ≈ 0.82–0.84).</p>
+      <p><b>Off-ball runs.</b> ≥ 1.5 s above 5 m/s while a teammate has the ball; classified as in behind, overlap / underlap, dragging a marker, or support. Space created = extra attacking control for teammates against a counterfactual where the runner (and his marker) stayed put.</p>
+      <p><b>Shape and formation.</b> Outfield convex hull, width, depth and centroid height per phase; formations by Hungarian matching of the average centroid-relative shape to twelve templates.</p>
+      <p><b>Players.</b> Distance, high-speed (> 5.5 m/s) and sprint (> 7 m/s) running on 0.4 s mean speed; top speed held for 1 s; pressures = ≥ 0.4 s within 4 m of the ball without it. Percentiles vs all outfield players with 30+ min.</p>
       <p><b>PPDA.</b> Opponent passes divided by defensive actions (ground challenges, interceptions, tackles) in the 60 % of the pitch furthest from the pressing team's goal.</p>
       <p><b>Counter-press.</b> Share of open-play ball losses won back within 5 s; tracking gives how many players were within 10 m of the ball in that window.</p>
       <p><b>Expected threat.</b> Singh's value iteration on a 12 × 8 grid with kernel-smoothed counts and a geometric xG prior. Carries are inferred between consecutive touches of the same player.</p>
@@ -371,8 +454,23 @@ function kpi() {
     ["Shots", T.home.shots, T.away.shots, v => v, "high"],
     ["Geometric xG", T.home.xg, T.away.xg, v => fmt(v, 2), "high"],
   ];
+  const Dc = D.decisions, O = D.offball, Sh = D.shape;
+  if (Dc) rows.push(["Passes to the best option", Dc.home.best_option_share, Dc.away.best_option_share, pct, "high"],
+    ["EPV left per pass (mEPV)", Dc.home.epv_left_per_pass * 1000, Dc.away.epv_left_per_pass * 1000, v => fmt(v, 1), "low"]);
+  if (O) rows.push(["High-intensity off-ball runs", O.home.runs, O.away.runs, v => v, "high"],
+    ["Runs in behind the line", O.home.by_category["Behind defensive line"], O.away.by_category["Behind defensive line"], v => v, "high"],
+    ["Space created by runs (m²)", O.home.space_m2, O.away.space_m2, v => Math.round(v).toLocaleString(), "high"]);
+  if (Sh) {
+    const fo = t => { const f = Sh.formations[t]; return `${f.out ? f.out.formation : "–"} / ${f.in ? f.in.formation : "–"}`; };
+    rows.push(["Block area out of possession (m²)", Sh.home.out.area, Sh.away.out.area, v => fmt(v, 0), "low"],
+      ["Formation (out / in possession)", fo("home"), fo("away"), v => v, "text"]);
+  }
   for (const [name, h, a, f, better] of rows) {
     const tr = html("tr", {}, t);
+    if (better === "text") {
+      html("td", { class: "h", text: h }, tr); html("td", { class: "metric", text: name }, tr); html("td", { class: "a", text: a }, tr);
+      continue;
+    }
     const total = (h || 0) + (a || 0);
     const hs = total ? (h || 0) / total : 0.5;
     const hWin = better === "high" ? h > a : h < a;
@@ -412,7 +510,8 @@ function divergingCss(p, maxAlpha = 0.6) {
 function ramps() {
   const g = "linear-gradient(90deg, var(--away), var(--surface-1) 50%, var(--home))";
   $("divramp").style.background = g; $("divramp2").style.background = g;
-  $("seqramp").style.background = "linear-gradient(90deg, var(--surface-1), var(--magnitude))";
+  $("seqramp").style.background = $("seqramp2").style.background = "linear-gradient(90deg, var(--surface-1), var(--magnitude))";
+  $("seqramp2").style.border = "1px solid var(--grid)";
   $("divramp").style.border = $("divramp2").style.border = $("seqramp").style.border = "1px solid var(--grid)";
 }
 
@@ -432,16 +531,20 @@ function spaceMap() {
 }
 
 // ---------- animated clips ----------
-const anim = { clip: 0, t: 0, playing: true, speed: 1, overlay: "pc", last: null, cache: {} };
+const anim = { clip: 0, t: 0, playing: true, speed: 1, overlay: "pc", last: null, cache: {},
+  layers: { heat: true, vec: true, shape: false, pass: true } };
 const canvas = $("pitch"), ctx = canvas.getContext("2d");
 const off = document.createElement("canvas"), offCtx = off.getContext("2d");
 function decode(b64) { const s = atob(b64), a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+const OTHER = { home: "away", away: "home" };
 
 function setupClips() {
+  const pcm = meta.pitch_control_model || {};
+  $("amax").textContent = pcm.a_max ?? "–"; $("vmax").textContent = pcm.v_max ?? "–";
   const sel = $("clip");
   sel.innerHTML = "";
   D.clips.forEach((c, i) => html("option", { value: i, text: c.title }, sel));
-  sel.addEventListener("change", () => { anim.clip = +sel.value; anim.t = 0; });
+  sel.addEventListener("change", () => { anim.clip = +sel.value; anim.t = 0; drawFrame(); });
   $("play").addEventListener("click", () => { anim.playing = !anim.playing; $("play").textContent = anim.playing ? "Pause" : "Play"; });
   document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click", () => {
     anim.speed = +b.dataset.speed;
@@ -450,7 +553,11 @@ function setupClips() {
   document.querySelectorAll("[data-overlay]").forEach(b => b.addEventListener("click", () => {
     anim.overlay = b.dataset.overlay;
     document.querySelectorAll("[data-overlay]").forEach(o => o.setAttribute("aria-pressed", o === b));
+    $("leg-epv").hidden = anim.overlay !== "epv"; $("leg-div").hidden = anim.overlay === "epv";
     drawFrame();
+  }));
+  document.querySelectorAll("[data-layer]").forEach(cb => cb.addEventListener("change", () => {
+    anim.layers[cb.dataset.layer] = cb.checked; drawFrame();
   }));
   $("scrub").addEventListener("input", e => {
     const c = D.clips[anim.clip];
@@ -470,55 +577,58 @@ function sizeCanvas() {
   anim.scale = w / (L + 2 * m) * dpr; anim.margin = m; anim.dpr = dpr;
 }
 
+// Player rows are [number, x, y, vx, vy, inRun].
 function interp(c, t) {
   const fi = t * c.fps, i = Math.min(Math.floor(fi), c.frames.length - 1), j = Math.min(i + 1, c.frames.length - 1);
   const a = fi - i, F0 = c.frames[i], F1 = c.frames[j];
   const lerpTeam = team => {
     const nxt = new Map(F1[team].map(p => [p[0], p]));
-    return F0[team].map(p => { const q = nxt.get(p[0]) || p; return [p[0], p[1] + (q[1] - p[1]) * a, p[2] + (q[2] - p[2]) * a]; });
+    return F0[team].map(p => { const q = nxt.get(p[0]) || p; return [p[0], p[1] + (q[1] - p[1]) * a, p[2] + (q[2] - p[2]) * a, p[3], p[4], p[5]]; });
   };
   const ball = F0.ball && F1.ball ? [F0.ball[0] + (F1.ball[0] - F0.ball[0]) * a, F0.ball[1] + (F1.ball[1] - F0.ball[1]) * a] : F0.ball;
   return { i, F: F0, home: lerpTeam("home"), away: lerpTeam("away"), ball };
 }
 
 function drawOverlay(c, s, state) {
-  const S = anim.scale, M = anim.margin;
-  const home = hexRgb(css("--home")), away = hexRgb(css("--away"));
-  let nx, ny, val;
-  if (anim.overlay === "pc") {
-    const f = state.F;
-    if (!f.pc) return null;
+  if (!anim.layers.heat) return null;
+  const S = anim.scale, M = anim.margin, f = state.F;
+  let nx, ny, val, mode = anim.overlay;
+  if (mode === "pc" || mode === "epv") {
+    const b64 = mode === "pc" ? f.pc : f.epv;
+    if (!b64) return null;
     [nx, ny] = c.grid;
-    const key = anim.clip + ":" + state.i;
-    val = anim.cache[key] || (anim.cache[key] = decode(f.pc));
-  } else if (anim.overlay === "voronoi") {
+    const key = anim.clip + ":" + mode + ":" + state.i;
+    val = anim.cache[key] || (anim.cache[key] = decode(b64));
+  } else {
     nx = 105; ny = 68;
     val = new Uint8Array(nx * ny);
-    const hp = state.home, ap = state.away;
     for (let j = 0; j < ny; j++) {
       const y = -HW + (j + 0.5) * W / ny;
       for (let i = 0; i < nx; i++) {
         const x = -HL + (i + 0.5) * L / nx;
         let dh = 1e9, da = 1e9;
-        for (const p of hp) { const d = (p[1] - x) ** 2 + (p[2] - y) ** 2; if (d < dh) dh = d; }
-        for (const p of ap) { const d = (p[1] - x) ** 2 + (p[2] - y) ** 2; if (d < da) da = d; }
+        for (const p of state.home) { const d = (p[1] - x) ** 2 + (p[2] - y) ** 2; if (d < dh) dh = d; }
+        for (const p of state.away) { const d = (p[1] - x) ** 2 + (p[2] - y) ** 2; if (d < da) da = d; }
         val[j * nx + i] = dh < da ? 255 : 0;
       }
     }
-  } else return null;
+  }
+  const home = hexRgb(css("--home")), away = hexRgb(css("--away")), mag = hexRgb(css("--magnitude"));
   off.width = nx; off.height = ny;
   const img = offCtx.createImageData(nx, ny);
   let sum = 0;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
     const p = val[j * nx + i] / 255; sum += p;
-    const k = ((ny - 1 - j) * nx + i) * 4, col = p >= 0.5 ? home : away;
-    img.data[k] = col[0]; img.data[k + 1] = col[1]; img.data[k + 2] = col[2];
-    img.data[k + 3] = Math.round(Math.abs(p - 0.5) * 2 * 150);
+    const k = ((ny - 1 - j) * nx + i) * 4;
+    let col, alpha;
+    if (mode === "epv") { col = mag; alpha = Math.sqrt(p) * 210; }
+    else { col = p >= 0.5 ? home : away; alpha = Math.abs(p - 0.5) * 2 * 150; }
+    img.data[k] = col[0]; img.data[k + 1] = col[1]; img.data[k + 2] = col[2]; img.data[k + 3] = Math.round(alpha);
   }
   offCtx.putImageData(img, 0, 0);
-  s.imageSmoothingEnabled = anim.overlay === "pc";
+  s.imageSmoothingEnabled = mode !== "voronoi";
   s.drawImage(off, M * S, M * S, L * S, W * S);
-  return sum / (nx * ny);
+  return mode === "epv" ? null : sum / (nx * ny);
 }
 
 function drawPitchLines(s) {
@@ -537,6 +647,128 @@ function drawPitchLines(s) {
   return { X, Y };
 }
 
+function hull(pts) {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of p.slice().reverse()) { while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+
+function teamDir(F, team) { return team === "home" ? F.hd : -F.hd; }
+
+function drawShape(c, s, state, X, Y) {
+  const S = anim.scale, F = state.F;
+  for (const team of ["home", "away"]) {
+    const keep = new Set(c.keepers[team] || []);
+    const pts = state[team].filter(p => !keep.has(p[0])).map(p => [p[1], p[2]]);
+    const h = hull(pts);
+    if (h.length < 3) continue;
+    s.beginPath(); h.forEach((q, k) => k ? s.lineTo(X(q[0]), Y(q[1])) : s.moveTo(X(q[0]), Y(q[1]))); s.closePath();
+    s.globalAlpha = 0.10; s.fillStyle = css("--" + team); s.fill();
+    s.globalAlpha = 0.55; s.strokeStyle = css("--" + team); s.lineWidth = Math.max(1, 0.2 * S); s.stroke();
+    s.globalAlpha = 1;
+  }
+  // Defensive lines of the team without the ball, cut at the two largest gaps (as in the analysis).
+  const att = F.att; if (!att) return;
+  const def = OTHER[att], d = teamDir(F, att), keep = new Set(c.keepers[def] || []);
+  const pl = state[def].filter(p => !keep.has(p[0])).map(p => [p[1] * d, p[2]]).sort((a, b) => a[0] - b[0]);
+  if (pl.length < 3) return;
+  const gaps = pl.slice(1).map((q, k) => [q[0] - pl[k][0], k + 1]).sort((a, b) => b[0] - a[0]).slice(0, 2).map(g => g[1]).sort((a, b) => a - b);
+  const groups = []; let prev = 0;
+  for (const g of gaps.concat([pl.length])) { groups.push(pl.slice(prev, g)); prev = g; }
+  s.strokeStyle = css("--" + def); s.lineWidth = Math.max(2, 0.45 * S); s.lineCap = "round";
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    const mx = g.reduce((a, q) => a + q[0], 0) / g.length / d;
+    const ys = g.map(q => q[1]);
+    s.globalAlpha = 0.8;
+    s.beginPath(); s.moveTo(X(mx), Y(Math.max(...ys) + 2)); s.lineTo(X(mx), Y(Math.min(...ys) - 2)); s.stroke();
+  }
+  s.globalAlpha = 1; s.lineCap = "butt";
+}
+
+function drawVectors(c, s, state, X, Y) {
+  const S = anim.scale, fr = c.frames, look = Math.round(c.fps * 1.5);
+  for (const team of ["home", "away"]) {
+    const col = css("--" + team);
+    for (const p of state[team]) {
+      // Run trail: where this player was over the last 1.5 s while in a detected run.
+      if (p[5]) {
+        s.beginPath(); let started = false;
+        for (let k = Math.max(0, state.i - look); k <= state.i; k++) {
+          const q = fr[k][team].find(r => r[0] === p[0]);
+          if (!q || !q[5]) { started = false; continue; }
+          started ? s.lineTo(X(q[1]), Y(q[2])) : s.moveTo(X(q[1]), Y(q[2])); started = true;
+        }
+        s.lineTo(X(p[1]), Y(p[2]));
+        s.strokeStyle = col; s.globalAlpha = 0.45; s.lineWidth = Math.max(3, 0.9 * S); s.lineCap = "round"; s.stroke();
+        s.globalAlpha = 1; s.lineCap = "butt";
+      }
+      const sp = Math.hypot(p[3], p[4]);
+      if (sp < 1.0) continue;
+      const x2 = p[1] + p[3], y2 = p[2] + p[4];  // one second ahead at the current velocity
+      s.strokeStyle = css("--text-primary"); s.lineWidth = Math.max(1.2, 0.22 * S); s.globalAlpha = 0.75;
+      s.beginPath(); s.moveTo(X(p[1]), Y(p[2])); s.lineTo(X(x2), Y(y2)); s.stroke();
+      const ang = Math.atan2(-(p[4]), p[3]), hl = Math.max(4, 0.9 * S);
+      s.beginPath(); s.moveTo(X(x2), Y(y2));
+      s.lineTo(X(x2) - hl * Math.cos(ang - 0.45), Y(y2) - hl * Math.sin(ang - 0.45));
+      s.lineTo(X(x2) - hl * Math.cos(ang + 0.45), Y(y2) - hl * Math.sin(ang + 0.45));
+      s.closePath(); s.fillStyle = css("--text-primary"); s.fill(); s.globalAlpha = 1;
+    }
+  }
+}
+
+function activePass(c, F) {
+  let best = null;
+  for (const p of c.passes || []) if (p.frame <= F.f && F.f <= Math.max(p.end_frame, p.frame + 25) + 12) best = p;
+  return best;
+}
+
+function pill(s, text, x, y, color) {
+  const S = anim.scale, fs = Math.max(11 * anim.dpr, 1.6 * S);
+  s.font = `600 ${fs}px system-ui, sans-serif`;
+  const w = s.measureText(text).width + fs * 0.8, h = fs * 1.5;
+  s.globalAlpha = 0.92; s.fillStyle = css("--surface-1");
+  s.beginPath(); s.roundRect ? s.roundRect(x - w / 2, y - h, w, h, h / 2) : s.rect(x - w / 2, y - h, w, h); s.fill();
+  s.globalAlpha = 1; s.strokeStyle = color; s.lineWidth = Math.max(1, 0.15 * S); s.stroke();
+  s.fillStyle = css("--text-primary"); s.textAlign = "center"; s.textBaseline = "middle"; s.fillText(text, x, y - h / 2);
+}
+
+function drawPass(c, s, state, X, Y) {
+  const p = activePass(c, state.F);
+  if (!p) return null;
+  const S = anim.scale, col = css("--" + p.team);
+  const [bx, by] = p.ball;
+  for (const o of p.options) {
+    s.strokeStyle = col; s.globalAlpha = 0.12 + 0.6 * o.c; s.lineWidth = Math.max(1, (0.15 + 0.5 * o.c) * S);
+    if (o.n === p.best) { s.globalAlpha = 1; s.lineWidth = Math.max(3, 0.8 * S); }
+    s.beginPath(); s.moveTo(X(bx), Y(by)); s.lineTo(X(o.x), Y(o.y)); s.stroke();
+  }
+  s.globalAlpha = 1;
+  const best = p.options.find(o => o.n === p.best), chosen = p.options.find(o => o.n === p.receiver);
+  const ring = (o, dashed) => {
+    s.beginPath(); s.arc(X(o.x), Y(o.y), Math.max(9 * anim.dpr, 2.3 * S), 0, 2 * Math.PI);
+    s.setLineDash(dashed ? [Math.max(3, 0.6 * S), Math.max(3, 0.5 * S)] : []);
+    s.strokeStyle = css("--text-primary"); s.lineWidth = Math.max(2, 0.35 * S); s.stroke(); s.setLineDash([]);
+  };
+  if (best) ring(best, false);
+  if (chosen && chosen !== best) ring(chosen, true);
+  const lab = o => `${Math.round(o.c * 100)}% · ${o.g >= 0 ? "+" : ""}${(o.g * 1000).toFixed(1)} mEPV`;
+  // Labels are drawn after the players (see drawFrame) so no marker covers them.
+  const labels = () => {
+    const off = Math.max(12 * anim.dpr, 3.2 * S);
+    const up = best && chosen && chosen !== best && chosen.y > best.y;  // keep the two labels apart
+    if (best) pill(s, (chosen === best ? "Chosen = best · " : "Best · ") + lab(best), X(best.x),
+                   up ? Y(best.y) + off + 1.6 * S : Y(best.y) - off, col);
+    if (chosen && chosen !== best) pill(s, "Chosen · " + lab(chosen), X(chosen.x),
+                                        up ? Y(chosen.y) - off : Y(chosen.y) + off + 1.6 * S, col);
+  };
+  return { p, best, chosen, labels };
+}
+
 function drawFrame() {
   if (!D.clips.length) return;
   const c = D.clips[anim.clip];
@@ -548,6 +780,9 @@ function drawFrame() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const share = drawOverlay(c, ctx, state);
   const { X, Y } = drawPitchLines(ctx);
+  if (anim.layers.shape) drawShape(c, ctx, state, X, Y);
+  const pass = anim.layers.pass ? drawPass(c, ctx, state, X, Y) : null;
+  if (anim.layers.vec) drawVectors(c, ctx, state, X, Y);
   const r = Math.max(5 * anim.dpr, 1.0 * S);
   ctx.font = `600 ${Math.round(r * 1.05)}px system-ui, sans-serif`;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -564,10 +799,26 @@ function drawFrame() {
     ctx.beginPath(); ctx.arc(X(state.ball[0]), Y(state.ball[1]), r * 0.55, 0, 2 * Math.PI);
     ctx.fillStyle = css("--ball"); ctx.fill(); ctx.lineWidth = Math.max(1.5, 0.2 * S); ctx.strokeStyle = css("--surface-1"); ctx.stroke();
   }
+  if (pass) pass.labels();
+  const bs = state.F.best_space;
+  if (anim.layers.heat && anim.overlay === "epv" && bs) {
+    ctx.beginPath(); ctx.arc(X(bs[0]), Y(bs[1]), Math.max(8 * anim.dpr, 2.0 * S), 0, 2 * Math.PI);
+    ctx.strokeStyle = css("--magnitude"); ctx.lineWidth = Math.max(2, 0.4 * S); ctx.stroke();
+    ctx.beginPath(); ctx.arc(X(bs[0]), Y(bs[1]), Math.max(2, 0.4 * S), 0, 2 * Math.PI); ctx.fillStyle = css("--magnitude"); ctx.fill();
+  }
   const t = Math.round(state.F.t), owner = { 1: "Home", "-1": "Away", 0: "nobody (dead ball)" }[state.F.pos];
   let cap = `<span>Match clock <b>${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}</b></span><span>In possession <b>${owner}</b></span>`;
   if (share != null) cap += `<span>${anim.overlay === "pc" ? "Pitch control" : "Voronoi space"} <b>Home ${pct(share)} · Away ${pct(1 - share)}</b></span>`;
+  if (anim.layers.heat && anim.overlay === "epv" && bs) cap += `<span>Most valuable space owned by ${TEAM[state.F.att] || "–"} <b>${(bs[2] * 1000).toFixed(1)} mEPV</b></span>`;
   $("clipcap").innerHTML = cap;
+  let pc2 = "";
+  if (pass && pass.best) {
+    const P = pass.p, rank = P.options.findIndex(o => o.n === P.receiver) + 1;
+    pc2 = `<span>${TEAM[P.team]} #${P.passer} passes to <b>#${P.receiver ?? "?"}</b>${rank ? ` (option ${rank} of ${P.options.length})` : ""}</span>` +
+      `<span>Best option <b>#${pass.best.n}</b>: ${Math.round(pass.best.c * 100)}% to arrive, ${(pass.best.g * 1000).toFixed(1)} mEPV</span>` +
+      (pass.chosen && pass.chosen !== pass.best ? `<span>Chosen: ${Math.round(pass.chosen.c * 100)}%, ${(pass.chosen.g * 1000).toFixed(1)} mEPV</span>` : "");
+  }
+  $("passcap").innerHTML = pc2;
   $("scrub").value = dur ? Math.round(anim.t / dur * 1000) : 0;
 }
 
@@ -589,7 +840,7 @@ function momentumChart() {
   const w = Math.max(box.clientWidth, 320), h = 300;
   const m = { l: 44, r: 12, t: 26, b: 70 };
   const ih = h - m.t - m.b;
-  const svg = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img", "aria-label": "Momentum timeline" }, box);
+  const svg = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img", "aria-label": "Momentum timeline", style: { overflow: "hidden" } }, box);
   const X = v => m.l + v / Math.max(n - 1, 1) * (w - m.l - m.r), Y = v => m.t + (1 - (v + 1) / 2) * ih;
   for (const v of [-1, 0, 1]) {
     el("line", { x1: m.l, x2: w - m.r, y1: Y(v), y2: Y(v), style: { stroke: v === 0 ? "var(--line)" : "var(--grid)", strokeWidth: 1 } }, svg);
@@ -674,6 +925,8 @@ function network(team) {
     el("text", { x, y: y + 0.05, "text-anchor": "middle", "dominant-baseline": "central", text: n.number, style: { fill: "#fff", fontSize: (r * 0.95) + "px", fontWeight: 650 } }, g);
     g.addEventListener("mousemove", ev => showTip(ev, `<b>${TEAM[team]} ${num(n.id)}</b>` + row("Passes made", n.passes) + row("Received", n.received) + row("Minutes", fmt(n.minutes, 0)) + row("Share of team passes", pct(n.involvement))));
     g.addEventListener("mouseleave", hideTip);
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => selectPlayer(n.id, true));
   }
 }
 
@@ -764,7 +1017,8 @@ function leaders() {
   const t = $("leaders");
   t.innerHTML = `<tr><th class="l">Player</th><th>xT</th><th title="Progressive passes">Prog.</th><th title="Line-breaking passes">Line br.</th><th>Packing</th></tr>`;
   for (const r of D.threat.leaders.slice(0, 10)) {
-    const tr = html("tr", {}, t);
+    const tr = html("tr", { "data-player": r.player, title: "Open in the player explorer" }, t);
+    tr.addEventListener("click", () => selectPlayer(r.player, true));
     const td = html("td", { class: "l" }, tr);
     html("i", { class: "swatch sw-" + r.team, style: { marginRight: "8px" } }, td);
     td.appendChild(document.createTextNode(`${TEAM[r.team]} ${num(r.player)}`));
@@ -772,12 +1026,254 @@ function leaders() {
   }
 }
 
+// ---------- off-ball runs ----------
+let runTeam = "home", runCat = "all";
+function setupRuns() {
+  if (!D.offball) return;
+  const sel = $("runcat");
+  html("option", { value: "all", text: "All run types" }, sel);
+  D.offball.categories.forEach(c => html("option", { value: c, text: c }, sel));
+  sel.addEventListener("change", () => { runCat = sel.value; runsMap(); });
+  document.querySelectorAll("[data-oteam]").forEach(b => b.addEventListener("click", () => {
+    runTeam = b.dataset.oteam;
+    document.querySelectorAll("[data-oteam]").forEach(o => o.setAttribute("aria-pressed", o === b));
+    runsMap();
+  }));
+}
+function arrowDefs(svg, id, color) {
+  const defs = el("defs", {}, svg);
+  const mk = el("marker", { id, viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto-start-reverse" }, defs);
+  el("path", { d: "M0,0L10,5L0,10z", style: { fill: color } }, mk);
+}
+function runsMap() {
+  if (!D.offball) return;
+  const { svg, over, P } = pitchSVG($("runs"), { label: "Off-ball runs" });
+  arrowDefs(svg, "run-arrow-" + runTeam, `var(--${runTeam})`);
+  const runs = D.offball.runs.filter(r => r.team === runTeam && (runCat === "all" || r.category === runCat));
+  const maxS = Math.max(50, ...runs.map(r => Math.max(r.space_m2, 0)));
+  for (const r of runs) {
+    const [x1, y1] = P(r.x0, r.y0), [x2, y2] = P(r.x1, r.y1), k = Math.max(r.space_m2, 0) / maxS;
+    el("line", { x1, y1, x2, y2, "marker-end": `url(#run-arrow-${runTeam})`, style: { stroke: `var(--${runTeam})`, strokeWidth: 0.25 + 0.9 * k, opacity: 0.35 + 0.6 * k, strokeLinecap: "round" } }, over);
+    const hit = el("line", { x1, y1, x2, y2, style: { stroke: "transparent", strokeWidth: 2.5 } }, over);
+    hit.addEventListener("mousemove", e => showTip(e, `<b>${TEAM[r.team]} ${num(r.player)} · ${Math.floor(r.minute)}'</b>` +
+      row("Run", r.category + (r.subtype ? ` (${r.subtype})` : "")) + row("Duration", fmt(r.duration, 1) + " s, top " + fmt(r.max_speed * 3.6, 0) + " km/h") +
+      row("Space opened for teammates", Math.round(r.space_m2) + " m² · " + fmt(r.space_epv * 1000, 1) + " mEPV") +
+      (r.marker ? row("Dragged", num(r.marker)) : "")));
+    hit.addEventListener("mouseleave", hideTip);
+  }
+  el("text", { x: 1, y: -0.6, text: `${runs.length} runs shown`, style: { fontSize: "2.4px" } }, over);
+}
+function runTable() {
+  const t = $("runtable"); if (!D.offball) return;
+  const O = D.offball;
+  t.innerHTML = `<tr><th class="l">Run type</th><th>Home</th><th>Away</th></tr>`;
+  const add = (k, h, a) => { const tr = html("tr", {}, t); html("td", { class: "l", text: k }, tr); html("td", { text: h }, tr); html("td", { text: a }, tr); };
+  for (const c of O.categories) add(c, O.home.by_category[c], O.away.by_category[c]);
+  add("… of which overlaps / underlaps", `${O.home.overlaps} / ${O.home.underlaps}`, `${O.away.overlaps} / ${O.away.underlaps}`);
+  add("Space opened for teammates", Math.round(O.home.space_m2).toLocaleString() + " m²", Math.round(O.away.space_m2).toLocaleString() + " m²");
+}
+
+// ---------- pass decisions ----------
+function decisionTables() {
+  const Dc = D.decisions, t = $("dectable"); if (!Dc) return;
+  t.innerHTML = `<tr><th class="l"></th><th>Home</th><th>Away</th></tr>`;
+  const m = v => fmt(v * 1000, 1);
+  const rows = [["Completed passes evaluated", "passes_evaluated", v => v], ["Chosen receiver = best option", "best_option_share", pct],
+    ["Chosen within the top 3 options", "top3_share", pct], ["Modelled completion of the chosen pass", "mean_completion_chosen", pct],
+    ["EPV gain of the chosen pass (mEPV)", "mean_gain_chosen", m], ["EPV gain of the best option (mEPV)", "mean_gain_best", m],
+    ["EPV left on the table per pass (mEPV)", "epv_left_per_pass", m]];
+  for (const [k, key, f] of rows) {
+    const tr = html("tr", {}, t); html("td", { class: "l", text: k }, tr);
+    html("td", { text: f(Dc.home[key]) }, tr); html("td", { text: f(Dc.away[key]) }, tr);
+  }
+  const mt = $("missed");
+  mt.innerHTML = `<tr><th class="l">Minute</th><th class="l">Pass played</th><th class="l">Best option</th><th>mEPV left</th></tr>`;
+  for (const r of Dc.missed.slice(0, 8)) {
+    const tr = html("tr", {}, mt);
+    html("td", { class: "l", text: Math.floor((r.frame - 1) / 1500) + "'" }, tr);
+    const td = html("td", { class: "l" }, tr); html("i", { class: "swatch sw-" + r.team, style: { marginRight: "6px" } }, td);
+    td.appendChild(document.createTextNode(`${num(r.player)} → ${num(r.receiver)} (${pct(r.actual_completion)})`));
+    html("td", { class: "l", text: `${num(r.best)} (${pct(r.best_completion)})` }, tr);
+    html("td", { text: fmt((r.best_gain - r.actual_gain) * 1000, 1) }, tr);
+  }
+}
+
+// ---------- team shape ----------
+let phase = "out";
+document.querySelectorAll("[data-phase]").forEach(b => b.addEventListener("click", () => {
+  phase = b.dataset.phase;
+  document.querySelectorAll("[data-phase]").forEach(o => o.setAttribute("aria-pressed", o === b));
+  formationPitch("home"); formationPitch("away");
+}));
+function formationPitch(team) {
+  if (!D.shape) return;
+  const f = D.shape.formations[team][phase], dims = D.shape[team][phase];
+  const halves = f && f.by_half ? Object.entries(f.by_half).map(([h, v]) => `${h === "1" ? "1st" : "2nd"} half ${v}`).join(", ") : "";
+  $(`form-${team}-h`).textContent = f ? `${TEAM[team]}: ${f.formation}${halves ? ` (${halves})` : ""}` : `${TEAM[team]}: –`;
+  const { over, P } = pitchSVG($(`form-${team}`), { label: TEAM[team] + " formation" });
+  $(`form-${team}-roles`).textContent = "";
+  if (!f || !dims) return;
+  const order = ["D", "DM", "M", "AM", "F"], side = ["L", "LC", "C", "RC", "R"];
+  const key = r => { const [l, sd] = r.split("-"); return order.indexOf(l) * 10 + side.indexOf(sd); };
+  $(`form-${team}-roles`).textContent = "Roles: " + f.players.slice().sort((a, b) => key(a.role) - key(b.role))
+    .map(pl => `${pl.role} ${num(pl.id)}`).join(" · ");
+  const cx = dims.height - HL;
+  for (const pl of f.players) {
+    const [x, y] = P(pl.x + cx, pl.y);
+    const g = el("g", {}, over);
+    el("circle", { cx: x, cy: y, r: 2.4, style: { fill: `var(--${team})`, stroke: "var(--surface-1)", strokeWidth: 0.5 } }, g);
+    el("text", { x, y: y + 0.05, "text-anchor": "middle", "dominant-baseline": "central", text: num(pl.id).slice(1), style: { fill: "#fff", fontSize: "2.3px", fontWeight: 650 } }, g);
+    g.addEventListener("mousemove", e => showTip(e, `<b>${TEAM[team]} ${num(pl.id)}</b>` + row("Role", pl.role) + `<div class="k">Click to open in the player explorer</div>`));
+    g.addEventListener("mouseleave", hideTip);
+    g.style.cursor = "pointer"; g.addEventListener("click", () => selectPlayer(pl.id, true));
+  }
+}
+function compactChart() {
+  if (!D.shape) return;
+  const box = $("compact"); box.innerHTML = "";
+  const tl = D.shape.timeline, n = tl.length;
+  const w = Math.max(box.clientWidth, 300), h = 220, m = { l: 48, r: 10, t: 10, b: 26 };
+  const svg = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img", "aria-label": "Compactness timeline" }, box);
+  const vals = tl.flatMap(r => [r.home_out, r.away_out]).filter(v => v != null);
+  const ymax = Math.ceil(Math.max(500, ...vals) / 500) * 500;
+  const X = i => m.l + i / Math.max(n - 1, 1) * (w - m.l - m.r), Y = v => m.t + (1 - v / ymax) * (h - m.t - m.b);
+  for (let v = 0; v <= ymax; v += ymax / 4) {
+    el("line", { x1: m.l, x2: w - m.r, y1: Y(v), y2: Y(v), style: { stroke: v ? "var(--grid)" : "var(--line)", strokeWidth: 1 } }, svg);
+    el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", text: Math.round(v) }, svg);
+  }
+  for (let mm = 0; mm < n; mm += 15) el("text", { x: X(mm), y: h - 8, "text-anchor": "middle", text: mm + "'" }, svg);
+  for (const team of ["home", "away"]) {
+    let d = "", pen = false;
+    tl.forEach((r, i) => { const v = r[team + "_out"]; if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + X(i) + "," + Y(v); pen = true; });
+    el("path", { d, style: { fill: "none", stroke: `var(--${team})`, strokeWidth: 2, strokeLinejoin: "round" } }, svg);
+  }
+  const cross = el("line", { y1: m.t, y2: h - m.b, style: { stroke: "var(--text-secondary)", strokeWidth: 1, opacity: 0 } }, svg);
+  const hit = el("rect", { x: m.l, y: 0, width: w - m.l - m.r, height: h, style: { fill: "transparent" } }, svg);
+  hit.addEventListener("mousemove", e => {
+    const b = svg.getBoundingClientRect(), mx = (e.clientX - b.left) / b.width * w;
+    const i = Math.max(0, Math.min(n - 1, Math.round((mx - m.l) / (w - m.l - m.r) * (n - 1)))), r = tl[i];
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.style.opacity = 0.6;
+    showTip(e, `<b>${r.minute}'</b>` + row("Home block", r.home_out == null ? "–" : Math.round(r.home_out) + " m²") + row("Away block", r.away_out == null ? "–" : Math.round(r.away_out) + " m²"));
+  });
+  hit.addEventListener("mouseleave", () => { cross.style.opacity = 0; hideTip(); });
+}
+function shapeTable() {
+  if (!D.shape) return;
+  const t = $("shapetable"), S = D.shape;
+  t.innerHTML = `<tr><th class="l"></th><th>Home out</th><th>Home in</th><th>Away out</th><th>Away in</th></tr>`;
+  for (const [k, key, d] of [["Hull area (m²)", "area", 0], ["Width (m)", "width", 1], ["Depth (m)", "depth", 1], ["Centroid from own goal (m)", "height", 1]]) {
+    const tr = html("tr", {}, t); html("td", { class: "l", text: k }, tr);
+    for (const [tm, ph] of [["home", "out"], ["home", "in"], ["away", "out"], ["away", "in"]]) html("td", { text: fmt(S[tm][ph][key], d) }, tr);
+  }
+}
+
+// ---------- player explorer ----------
+const RAW = {
+  distance_p90: v => fmt(v, 1) + " km", hsr_p90: v => Math.round(v) + " m", sprint_p90: v => Math.round(v) + " m",
+  top_speed_kmh: v => fmt(v, 1) + " km/h", xt_p90: v => fmt(v, 2), progressive_p90: v => fmt(v, 1),
+  line_breaking_p90: v => fmt(v, 1), packing_p90: v => fmt(v, 1), pressures_p90: v => fmt(v, 1),
+  defensive_actions_p90: v => fmt(v, 1), runs_p90: v => fmt(v, 1),
+};
+let selA = null, selB = null;
+const byId = id => (D.players || []).find(p => p.id === id);
+function playerName(p) { return `${TEAM[p.team]} #${p.number}${p.role ? " · " + p.role : ""}`; }
+function setupExplorer() {
+  if (!D.players || !D.players.length) { $("explorer").hidden = true; return; }
+  const ps = D.players.slice().sort((a, b) => a.team.localeCompare(b.team) * -1 || a.number - b.number);
+  const fill = (sel, none) => {
+    sel.innerHTML = "";
+    if (none) html("option", { value: "", text: "— nobody —" }, sel);
+    for (const team of ["home", "away"]) {
+      const g = html("optgroup", { label: TEAM[team] }, sel);
+      ps.filter(p => p.team === team).forEach(p => html("option", { value: p.id, text: `${playerName(p)} (${Math.round(p.minutes)}')` }, g));
+    }
+  };
+  fill($("pa"), false); fill($("pb"), true);
+  selA = (D.threat.leaders[0] || {}).player || ps[0].id;
+  $("pa").value = selA;
+  $("pa").addEventListener("change", e => { selA = e.target.value; explorer(); });
+  $("pb").addEventListener("change", e => { selB = e.target.value || null; explorer(); });
+  $("poolsize").textContent = ps[0].pool_size;
+}
+function selectPlayer(id, scroll) {
+  if (!byId(id)) return;
+  selA = id; $("pa").value = id; explorer();
+  if (scroll) $("explorer").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function explorer() {
+  const A = byId(selA); if (!A) return;
+  const B = selB ? byId(selB) : null;
+  $("pheader").innerHTML = `<span><i class="swatch sw-${A.team}"></i> <b>${playerName(A)}</b></span><span>${Math.round(A.minutes)} min</span>` +
+    (A.small_sample ? `<span>under 30 min: read percentiles with care</span>` : "") +
+    (B ? `<span>vs <i class="swatch" style="background:var(--magnitude)"></i> <b>${playerName(B)}</b></span>` : "");
+  // territory + pass map
+  const { svg, under, over, P } = pitchSVG($("pterritory"), { label: "Territory heatmap" });
+  const hm = A.heatmap, ny = hm.length, nx = hm[0].length, cw = L / nx, ch = W / ny, vmax = Math.max(...hm.flat(), 1e-9);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const v = hm[j][i]; if (!v) continue;
+    const [px, py] = P(-HL + i * cw, -HW + (j + 1) * ch);
+    const r = el("rect", { x: px, y: py, width: cw + 0.05, height: ch + 0.05, style: { fill: `var(--${A.team})`, opacity: 0.08 + 0.8 * Math.sqrt(v / vmax) } }, under);
+    r.addEventListener("mousemove", e => showTip(e, row("Time here", pct(v))));
+    r.addEventListener("mouseleave", hideTip);
+  }
+  arrowDefs(svg, "pm-arrow", "var(--text-primary)");
+  for (const q of A.pass_map) {
+    const [x1, y1] = P(q.x, q.y), [x2, y2] = P(q.end_x, q.end_y);
+    el("line", { x1, y1, x2, y2, "marker-end": "url(#pm-arrow)", style: { stroke: "var(--text-primary)", strokeWidth: q.line_breaking ? 0.55 : 0.35, opacity: 0.85, strokeLinecap: "round" } }, over);
+  }
+  // physical / tactical table
+  const t = $("pphys");
+  t.innerHTML = `<tr><th class="l"></th><th>${playerName(A)}</th>${B ? `<th>${playerName(B)}</th>` : ""}</tr>`;
+  const rowsP = [["Distance", p => fmt(p.distance_km, 2) + " km"], ["High-speed running (> 5.5 m/s)", p => Math.round(p.hsr_m) + " m"],
+    ["Sprinting (> 7 m/s)", p => `${Math.round(p.sprint_m)} m · ${p.sprints} sprints`], ["Top speed (1 s)", p => fmt(p.top_speed_kmh, 1) + " km/h"],
+    ["xT added (pass + carry)", p => `${fmt(p.xt, 2)} (${fmt(p.xt_passes, 2)} + ${fmt(p.xt_carries, 2)})`],
+    ["Progressive / line-breaking passes", p => `${p.progressive} / ${p.line_breaking}`], ["Packing (opponents bypassed)", p => p.packing],
+    ["Pressures / defensive actions", p => `${p.pressures} / ${p.defensive_actions}`], ["Off-ball runs (in behind)", p => `${p.runs} (${p.runs_behind})`],
+    ["Passes to the best option", p => p.best_option_share == null ? "–" : pct(p.best_option_share)]];
+  for (const [k, f] of rowsP) { const tr = html("tr", {}, t); html("td", { class: "l", text: k }, tr); html("td", { text: f(A) }, tr); if (B) html("td", { text: f(B) }, tr); }
+  radar(A, B); bars(A, B);
+}
+function radar(A, B) {
+  const box = $("pradar"); box.innerHTML = "";
+  const M = D.player_metrics, n = M.length, w = Math.max(box.clientWidth, 260), h = Math.min(w, 380);
+  const R = Math.max(60, Math.min(h / 2 - 46, w / 2 - (w < 420 ? 74 : 110))), cx = w / 2, cy = h / 2;
+  const svg = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img", "aria-label": "Percentile radar" }, box);
+  const pt = (k, v) => { const a = -Math.PI / 2 + 2 * Math.PI * k / n; return [cx + Math.cos(a) * R * v / 100, cy + Math.sin(a) * R * v / 100]; };
+  for (const ring of [25, 50, 75, 100]) {
+    el("polygon", { points: M.map((_, k) => pt(k, ring).join(",")).join(" "), style: { fill: "none", stroke: "var(--grid)", strokeWidth: 1 } }, svg);
+  }
+  M.forEach(([key, label], k) => {
+    const [x, y] = pt(k, 100); el("line", { x1: cx, y1: cy, x2: x, y2: y, style: { stroke: "var(--grid)", strokeWidth: 1 } }, svg);
+    const [lx, ly] = pt(k, 118);
+    el("text", { x: lx, y: ly + 4, "text-anchor": Math.abs(lx - cx) < 8 ? "middle" : lx > cx ? "start" : "end", text: label.replace(" / 90", "").replace("High-speed running", "HSR").replace("Line-breaking passes", "Line-breaking").replace("Progressive passes", "Progressive"), style: { fontSize: w < 420 ? "10px" : "11px" } }, svg);
+  });
+  const poly = (p, col, fillOp) => el("polygon", { points: M.map(([key], k) => pt(k, p.pct[key] ?? 0).join(",")).join(" "),
+    style: { fill: col, fillOpacity: fillOp, stroke: col, strokeWidth: 2, strokeLinejoin: "round" } }, svg);
+  if (B) poly(B, "var(--magnitude)", 0.12);
+  poly(A, "var(--text-primary)", 0.12);
+}
+function bars(A, B) {
+  const box = $("pbars"); box.innerHTML = "";
+  for (const [key, label] of D.player_metrics) {
+    const r = html("div", { class: "pbar" }, box);
+    html("div", { text: label }, r);
+    const tr = html("div", { class: "track", title: `${Math.round(A.pct[key] ?? 0)}th percentile` }, r);
+    html("div", { class: "fill", style: { width: (A.pct[key] ?? 0) + "%" } }, tr);
+    if (B) html("div", { class: "mark", style: { left: (B.pct[key] ?? 0) + "%" }, title: `${Math.round(B.pct[key] ?? 0)}th percentile` }, tr);
+    const v = html("div", { class: "v" }, r);
+    v.innerHTML = `<b>${RAW[key](A[key])}</b> · ${Math.round(A.pct[key] ?? 0)}%` + (B ? `<br>${RAW[key](B[key])} · ${Math.round(B.pct[key] ?? 0)}%` : "");
+  }
+}
+
 function renderAll() {
   kpi(); ramps(); spaceMap(); momentumChart(); network("home"); network("away"); recoveries(); ppdaChart(); xtChart(); leaders();
+  runsMap(); runTable(); decisionTables(); formationPitch("home"); formationPitch("away"); compactChart(); shapeTable(); explorer();
   sizeCanvas(); drawFrame();
 }
 insightCards();
 setupClips();
+setupRuns();
+setupExplorer();
 renderAll();
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 120); });
 })();

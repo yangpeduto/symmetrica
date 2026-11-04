@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>symmetrica · tactical analytics</title>
+<meta name="description" content="Tactical analytics from football tracking data: momentum-aware pitch control, EPV, pressing, off-ball runs, team shape and player scouting, as interactive match reports.">
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f3f0; --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e;
+  --text-muted: #77766f; --grid: #e4e3df; --line: #c9c8c1; --home: #2a78d6; --away: #eb6834; --magnitude: #6250d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
+    --text-muted: #96958c; --grid: #2e2d2a; --line: #4a4944; --home: #3987e5; --away: #d95926; --magnitude: #9085e9;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7;
+  --text-muted: #96958c; --grid: #2e2d2a; --line: #4a4944; --home: #3987e5; --away: #d95926; --magnitude: #9085e9;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--surface-0); color: var(--text-primary);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 40px; }
+.brand { font-weight: 700; letter-spacing: -0.01em; font-size: 18px; }
+nav a { color: var(--text-secondary); text-decoration: none; font-size: 15px; }
+nav a:hover { color: var(--text-primary); }
+h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.1; margin: 0 0 14px; letter-spacing: -0.02em; font-weight: 700; max-width: 820px; }
+.lede { font-size: 18px; color: var(--text-secondary); max-width: 720px; margin: 0 0 28px; }
+.hero img { width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid var(--grid); }
+h2 { font-size: 22px; margin: 48px 0 6px; letter-spacing: -0.01em; }
+.sub { color: var(--text-secondary); margin: 0 0 18px; }
+.matches { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.match { display: block; background: var(--surface-1); border: 1px solid var(--grid); border-radius: 14px; padding: 20px;
+  color: inherit; text-decoration: none; transition: border-color .12s, transform .12s; }
+.match:hover { border-color: var(--text-secondary); transform: translateY(-1px); }
+.match .name { color: var(--text-secondary); font-size: 14px; text-transform: uppercase; letter-spacing: .04em; }
+.score { display: flex; align-items: center; gap: 12px; margin: 6px 0 14px; font-variant-numeric: tabular-nums; font-weight: 650; }
+.score .n { font-size: 34px; font-weight: 750; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.stats { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.stats td { padding: 6px 0; border-top: 1px solid var(--grid); }
+.stats td:first-child { text-align: left; font-weight: 600; }
+.stats td:nth-child(2) { text-align: center; color: var(--text-secondary); }
+.stats td:last-child { text-align: right; font-weight: 600; }
+.cta { margin-top: 14px; font-weight: 600; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.feature { background: var(--surface-1); border: 1px solid var(--grid); border-radius: 12px; padding: 16px; }
+.feature b { display: block; margin-bottom: 4px; }
+.feature span { color: var(--text-secondary); font-size: 15px; }
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.shots figure { margin: 0; }
+.shots img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top; display: block; border-radius: 12px; border: 1px solid var(--grid); }
+.shots figcaption { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
+footer { color: var(--text-muted); font-size: 14px; margin-top: 56px; border-top: 1px solid var(--grid); padding-top: 18px; }
+footer a { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<main>
+  <nav><span class="brand">symmetrica</span><span><a href="__REPO__">GitHub repository ↗</a></span></nav>
+  <section class="hero">
+    <h1>Tactical analytics from football tracking data.</h1>
+    <p class="lede">Momentum-aware pitch control, expected possession value, pressing, off-ball runs, team shape and
+      player scouting, computed from 25 Hz tracking and event data and delivered as interactive, self-contained match reports.</p>
+    <img src="assets/report_pitch_control.png" alt="Replay of a goal with the pitch-control heatmap, velocity vectors and pass options">
+  </section>
+
+  <h2>Explore the matches</h2>
+  <p class="sub">Two full matches of open Metrica Sports data. Each report runs entirely in the browser, with no server and no tracking scripts.</p>
+  <div class="matches">__MATCHES__</div>
+
+  <h2>What is inside each report</h2>
+  <div class="features">
+    <div class="feature"><b>Replays with four layers</b><span>Pitch control or EPV heatmap, velocity vectors and run trails, convex hulls and defensive lines, and every pass option against the one chosen.</span></div>
+    <div class="feature"><b>Physics-based pitch control</b><span>Arrival times under bounded acceleration (7 m/s²): a sprinting player cannot turn round instantly.</span></div>
+    <div class="feature"><b>Expected possession value</b><span>Pitch control × expected threat: the dangerous space the team in possession owns right now.</span></div>
+    <div class="feature"><b>Pass decisions</b><span>Completion probability and EPV gain of all ten teammates at every pass, against the receiver actually chosen.</span></div>
+    <div class="feature"><b>Off-ball runs</b><span>High-intensity runs in behind, overlaps and underlaps, dragged markers, and the space each run opened (counterfactual pitch control).</span></div>
+    <div class="feature"><b>Shape and formation</b><span>Hull area, block width and depth, line height, and formations in and out of possession by template matching.</span></div>
+    <div class="feature"><b>Pressing</b><span>PPDA, counter-press regains within 5 s, high turnovers and pressure on the ball.</span></div>
+    <div class="feature"><b>Player explorer</b><span>Physical load, xT, line-breaking passes, packing and runs, with territory, pass maps, radar and percentile comparison.</span></div>
+  </div>
+
+  <h2>A look inside</h2>
+  <div class="shots">
+    <figure><img src="assets/report_overview.png" alt="Team comparison and automated tactical insights" loading="lazy"><figcaption>Team comparison and rule-based tactical insights.</figcaption></figure>
+    <figure><img src="assets/report_explorer.png" alt="Player explorer with territory heatmap, radar and percentile bars" loading="lazy"><figcaption>Player explorer: territory, pass map, radar and percentiles.</figcaption></figure>
+    <figure><img src="assets/report_shape_runs.png" alt="Off-ball runs, pass decisions and team shape" loading="lazy"><figcaption>Off-ball runs, pass decisions and formations.</figcaption></figure>
+  </div>
+
+  <footer>
+    Tracking and event data © Metrica Sports, published as open sample data. Built with
+    <a href="__REPO__">symmetrica</a> (Python, NumPy, pandas, SciPy). Generated __GENERATED__.
+  </footer>
+</main>
+</body>
+</html>

@@ -23,6 +23,11 @@ players are grouped into defensive lines by splitting their x positions at
 the largest gaps (natural breaks). A completed pass breaks a line when it
 starts at least 2 m behind it and is received at least 2 m beyond it.
 
+**Expected possession value of space.** EPV(r) = PC_att(r) * xT(r): the
+attacking team's pitch control times the threat of the location, i.e. how
+much dangerous space the team in possession owns right now
+(`epv_surface`).
+
 **Packing** (outplayed opponents). Opponents goal-side of the ball when the
 pass is played minus opponents goal-side of the ball when it is received,
 both from tracking. It counts players taken out of the game by the pass.
@@ -133,6 +138,22 @@ class ExpectedThreat:
         idx = _cell(x_att, y, self.nx, self.ny)
         out = self.values.ravel()[np.maximum(idx, 0)]
         return np.where(idx >= 0, out, np.nan)
+
+    def interpolate(self, x_att, y) -> np.ndarray:
+        """Bilinear xT between cell centres (smooth surface for EPV), NaN where unknown."""
+        x_att, y = np.asarray(x_att, float), np.asarray(y, float)
+        fx = (x_att + HALF_L) / PITCH_LENGTH * self.nx - 0.5
+        fy = (y + HALF_W) / PITCH_WIDTH * self.ny - 0.5
+        ok = np.isfinite(fx) & np.isfinite(fy)
+        fx = np.clip(np.where(ok, fx, 0), 0, self.nx - 1)
+        fy = np.clip(np.where(ok, fy, 0), 0, self.ny - 1)
+        x0 = np.minimum(fx.astype(int), self.nx - 2)
+        y0 = np.minimum(fy.astype(int), self.ny - 2)
+        ax, ay = fx - x0, fy - y0
+        v = self.values
+        out = ((1 - ax) * (1 - ay) * v[y0, x0] + ax * (1 - ay) * v[y0, x0 + 1]
+               + (1 - ax) * ay * v[y0 + 1, x0] + ax * ay * v[y0 + 1, x0 + 1])
+        return np.where(ok, out, np.nan)
 
     @classmethod
     def fit(cls, acts: pd.DataFrame, nx: int = 12, ny: int = 8, bandwidth: float = 1.0,
@@ -295,3 +316,16 @@ def threat_summary(passes: pd.DataFrame, acts: pd.DataFrame) -> dict:
             "xg": float(geometric_xg(shots["x"].to_numpy(), shots["y"].to_numpy()).sum()) if len(shots) else 0.0,
         }
     return out
+
+
+def epv_surface(att_control: np.ndarray, cells: np.ndarray, xt: ExpectedThreat, direction: int) -> np.ndarray:
+    """Expected possession value of space: EPV(r) = PC_att(r) * xT(r).
+
+    `att_control` is the attacking team's pitch control on `cells` (any
+    shape whose size matches len(cells)), `direction` the way that team
+    attacks (+1 towards +x). High values mark dangerous space the attacking
+    team currently owns; space the defence owns, or space far from goal,
+    is worth little.
+    """
+    x_att, y_att = cells[:, 0] * direction, cells[:, 1] * direction
+    return np.asarray(att_control).reshape(-1) * xt.interpolate(x_att, y_att).reshape(-1)

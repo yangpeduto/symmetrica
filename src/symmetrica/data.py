@@ -42,7 +42,8 @@ def _read_tracking_file(path: Path, team: str) -> pd.DataFrame:
     names = ["period", "frame", "time"]
     for col in header[3:]:
         if not col.startswith("Unnamed"):
-            prefix = "ball" if col == "Ball" else f"{team}_{col.replace('Player', '')}"
+            # Metrica writes some names with a space ("Player 26"), in tracking and events alike.
+            prefix = "ball" if col == "Ball" else f"{team}_{col.replace('Player', '').strip()}"
             names += [f"{prefix}_x", f"{prefix}_y"]
     df = pd.read_csv(path, skiprows=3, header=None, names=names)
     for col in [c for c in df.columns if c.endswith("_x")]:
@@ -72,7 +73,7 @@ EVENT_COLUMNS = ["team", "type", "subtype", "period", "start_frame", "start_time
 
 def _player_id(team: pd.Series, name: pd.Series) -> pd.Series:
     """'Player19' of the away team -> 'away_19', the stem used by the tracking columns."""
-    number = name.astype(str).str.replace("Player", "", regex=False)
+    number = name.astype(str).str.replace("Player", "", regex=False).str.strip()
     return (team + "_" + number).astype(object).where(name.notna(), None)
 
 
